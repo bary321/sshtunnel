@@ -29,18 +29,25 @@ func (tunnel *SSHTunnel) Start() error {
 		return err
 	}
 	tunnel.Local.Port = listener.Addr().(*net.TCPAddr).Port
+	var wg sync.WaitGroup
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
 			return err
 		}
 		tunnel.logf("accepted connection")
-		var wg sync.WaitGroup
+		wg.Add(1)
 		go tunnel.forward(conn, &wg)
-		wg.Wait()
-		tunnel.logf("tunnel closed")
-		break
+		select {
+		case <-tunnel.close:
+			break
+		default:
+
+		}
 	}
+	wg.Wait()
+
+	tunnel.logf("tunnel closed")
 	err = listener.Close()
 	if err != nil {
 		return err
@@ -49,6 +56,7 @@ func (tunnel *SSHTunnel) Start() error {
 }
 
 func (tunnel *SSHTunnel) forward(localConn net.Conn, wg *sync.WaitGroup) {
+	defer wg.Done()
 	serverConn, err := ssh.Dial("tcp", tunnel.Server.String(), tunnel.Config)
 	if err != nil {
 		tunnel.logf("server dial error: %s", err)
@@ -74,7 +82,7 @@ func (tunnel *SSHTunnel) forward(localConn net.Conn, wg *sync.WaitGroup) {
 	_ = localConn.Close()
 	_ = serverConn.Close()
 	_ = remoteConn.Close()
-	wg.Done()
+	//wg.Done()
 	return
 }
 
@@ -86,7 +94,7 @@ func (tunnel *SSHTunnel) Close() {
 // NewSSHTunnel creates a new single-use tunnel. Supplying "0" for localport will use a random port.
 func NewSSHTunnel(tunnel string, auth ssh.AuthMethod, destination string, localport string) *SSHTunnel {
 
-	localEndpoint := NewEndpoint("localhost:"+localport)
+	localEndpoint := NewEndpoint("localhost:" + localport)
 
 	server := NewEndpoint(tunnel)
 	if server.Port == 0 {
