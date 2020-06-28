@@ -30,21 +30,27 @@ func (tunnel *SSHTunnel) Start() error {
 	}
 	tunnel.Local.Port = listener.Addr().(*net.TCPAddr).Port
 	var wg sync.WaitGroup
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			return err
-		}
-		tunnel.logf("accepted connection")
-		wg.Add(1)
-		go tunnel.forward(conn, &wg)
-		select {
-		case <-tunnel.close:
-			break
-		default:
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				tunnel.logf("accept error", err)
+				return
+			}
+			tunnel.logf("accepted connection")
+			wg.Add(1)
+			go tunnel.forward(conn, &wg)
+			select {
+			case <-tunnel.close:
+				break
+			default:
 
+			}
 		}
-	}
+	}()
+
 	wg.Wait()
 
 	tunnel.logf("tunnel closed")
@@ -72,16 +78,13 @@ func (tunnel *SSHTunnel) forward(localConn net.Conn, wg *sync.WaitGroup) {
 	copyConn := func(writer, reader net.Conn) {
 		_, err := io.Copy(writer, reader)
 		if err != nil {
-			tunnel.logf("io.Copy error: %s", err)
+			tunnel.logf("%v %v io.Copy error: %s", writer.LocalAddr(), reader.LocalAddr(), err)
+			writer.Close()
+			reader.Close()
 		}
 	}
 	go copyConn(localConn, remoteConn)
-	go copyConn(remoteConn, localConn)
-	<-tunnel.close
-	tunnel.logf("close signal received, closing...")
-	_ = localConn.Close()
-	_ = serverConn.Close()
-	_ = remoteConn.Close()
+	copyConn(remoteConn, localConn)
 	//wg.Done()
 	return
 }
